@@ -15,10 +15,12 @@ void on_new_item(
     g_print("%s \n", gray_item_get_title(item));
 }
 
-int main(char argv[]) {
-    gtk_init(NULL, NULL);
+int main(int argc, char** argv) {
+    gtk_init(&argc, &argv);
+
     GrayWatcher* watcher = gray_watcher_new();
     g_signal_connect(watcher, "item-added", G_CALLBACK(on_new_item), NULL);
+
     gtk_main();
     return 0;
 }

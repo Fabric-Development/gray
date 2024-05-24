@@ -4,12 +4,14 @@ using Gray;
 
 void main(string[] argv) {
     Gtk.init(ref argv);
+
     var watcher = new Gray.Watcher();
     watcher.item_added.connect(
         (identifier) => {
             var item = watcher.get_item_for_identifier(identifier);
-            print(@"$(item.tooltip.text)");
+            print(@"$(item.title)\n");
         }
     );
+
     Gtk.main();
 }

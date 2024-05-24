@@ -254,9 +254,7 @@ namespace Gray {
         }
         
         public DbusmenuGtk.Menu? create_menu() {
-            if (this.menu_path == "") {
-                return null;
-            }
+            if (this.menu_path == "") return null;
             return new DbusmenuGtk.Menu(this.proxy.get_name_owner(), this.menu_path);
         }
     }
@@ -295,7 +293,7 @@ namespace Gray {
         [DBus (name = "ProtocolVersion")]
         public int protocol_version { default = 3; get; }
 
-        public Watcher() {
+        construct {
             this.items = new HashTable<string, Item> (str_hash, str_equal);
             this.register();
         }
@@ -350,6 +348,5 @@ namespace Gray {
 
         [DBus (name = "RegisterStatusNotifierHost")]
         public void register_status_notifier_host(string service) throws DBusError, IOError { return; }
-
     }
 }
