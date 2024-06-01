@@ -57,10 +57,11 @@ custom_target(
   'gray typelib',
   depends: libgray,
   output: introspection_name + '.typelib',
+
   command: [
     g_ir_compiler,
-    '--shared-library', libgray.full_path(),
-    '--output', introspection_name + '.typelib',
+    '--output', '@OUTPUT@',
+    '--shared-library', get_option('prefix') / get_option('libdir') / 'libgray',
     join_paths(meson.current_build_dir(), introspection_name + '.gir')
   ],
   install: true,

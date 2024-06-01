@@ -7,7 +7,7 @@
     self,
     nixpkgs,
   }: let
-    version = "0.1";
+    version = "0.0.1";
     system = "x86_64-linux";
     pkgs = import nixpkgs {inherit system;};
 
@@ -22,6 +22,7 @@
     buildInputs = with pkgs; [
       glib
       libdbusmenu-gtk3
+      gtk3
     ];
   in {
     packages.${system} = rec {
