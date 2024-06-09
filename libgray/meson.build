@@ -59,7 +59,7 @@ custom_target(
   output: introspection_name + '.typelib',
   command: [
     g_ir_compiler,
-    '--shared-library', get_option('prefix') / get_option('libdir') / 'libgray',
+    '--shared-library', libgray.full_path(),
     '--output', '@OUTPUT@',
     join_paths(meson.current_build_dir(), introspection_name + '.gir')
   ],
