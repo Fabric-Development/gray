@@ -1,352 +1,396 @@
-// !/usr/bin/env -S vala --pkg gtk+-3.0 --pkg gio-2.0 --pkg Dbusmenu-0.4 --pkg DbusmenuGtk3-0.4 --pkg gdk-pixbuf-2.0
-using Gdk;
-using GLib;
-using DbusmenuGtk;
-
 namespace Gray {
-    //  TODO: document the namespace and later generate docs using valadoc
-    public struct Pixmap {
+    [DBus (name = "org.kde.StatusNotifierWatcher")]
+    private interface DBusStatusNotifierWatcher : Object {
+        [DBus (name = "RegisterStatusNotifierItem")]
+        public abstract async void register_item(string service) throws Error;
+    
+        [DBus (name = "RegisteredStatusNotifierItems")]
+        public abstract string[] registered_items { owned get; }
+        [DBus (name = "IsStatusNotifierHostRegistered")]
+        public abstract bool is_host_registered {  get; }
+        [DBus (name = "ProtocolVersion")]
+        public abstract int version {  get; }
+    
+        [DBus (name = "StatusNotifierItemRegistered")]
+        public signal void item_registered(string service);
+        [DBus (name = "StatusNotifierItemUnregistered")]
+        public signal void item_unregistered(string service);
+        [DBus (name = "StatusNotifierHostRegistered")]
+        public signal void host_registered();
+        [DBus (name = "StatusNotifierHostUnregistered")]
+        public signal void host_unregistered();
+    }
+    
+    [DBus (name = "org.kde.StatusNotifierItem")]
+    private class DBusStatusNotifierItem : Object {
+        private StatusNotifierItem item;
+        private ObjectPath menu_path;
+    
+        public DBusStatusNotifierItem(StatusNotifierItem item, ObjectPath? menu_path) {
+            this.item = item;
+            this.menu_path = menu_path ?? new ObjectPath("/NO_DBUSMENU");
+        }
+    
+        [DBus (name = "Category")]
+        public string category { owned get { return item.category; } }
+        [DBus (name = "Id")]
+        public string id { owned get { return item.id; } }
+        [DBus (name = "Title")]
+        public string title { owned get { return item.title; } }
+        [DBus (name = "Status")]
+        public string status { owned get { return item.status; } }
+        [DBus (name = "WindowId")]
+        public int32 window_id { get { return item.window_id; } }
+        [DBus (name = "IconName")]
+        public string icon_name { owned get { return item.icon_name; } }
+        [DBus (name = "OverlayIconName")]
+        public string overlay_icon_name { owned get { return item.overlay_icon_name ?? ""; } }
+        [DBus (name = "AttentionIconName")]
+        public string attention_icon_name { owned get { return item.attention_icon_name ?? icon_name; } }
+        [DBus (name = "ToolTip")]
+        public DBusStatusNotifierItemToolTip tool_tip { owned get { return item.tool_tip ?? DBusStatusNotifierItemToolTip.empty(); } }
+        [DBus (name = "ItemIsMenu")]
+        public bool is_menu { get { return item.is_menu; } }
+        [DBus (name = "Menu")]
+        public ObjectPath menu { get { return menu_path; } }
+    
+        [DBus (name = "ContextMenu")]
+        public void context_menu(int x, int y) throws Error { item.context_menu(x, y); }
+        // Connecting to "Activate" causes a delay in opening the menu when using
+        // "AppIndicator and KStatusNotifierItem Support" GNOME Shell extension,
+        // because it waits too see if there is a double click
+        [DBus (name = "Activate")]
+        public void activate(int x, int y) throws Error { item.activate(x, y); }
+        //  [DBus (name = "SecondaryActivate")]
+        //  public void secondary_activate(int x, int y) throws Error { item.secondary_activate(x, y); }
+        //  [DBus (name = "Scroll")]
+        //  public void scroll(int delta, string orientation) throws Error { item.scroll(delta, orientation); }
+    
+        [DBus (name = "NewTitle")]
+        public signal void on_new_title();
+        [DBus (name = "NewIcon")]
+        public signal void on_new_icon();
+        [DBus (name = "NewMenu")]
+        public signal void on_new_menu();
+        [DBus (name = "NewToolTip")]
+        public signal void on_new_tool_tip();
+        [DBus (name = "NewStatus")]
+        public signal void on_new_status(string status);
+    }
+    
+    [DBus (name = "com.canonical.dbusmenu")]
+    private class DBusMenu : Object {
+        private StatusNotifierItem item;
+    
+        public DBusMenu(StatusNotifierItem item) {
+            this.item = item;
+        }
+    
+        [DBus (name = "Version")]
+        public uint32 version { get { return 3; } }
+        [DBus (name = "TextDirection")]
+        public string text_direction { get { return "ltr"; } }
+        [DBus (name = "Status")]
+        public string status { get { return "normal"; } }
+    
+        public static int32[] get_children_ids(int32 parent_id, MenuModel model) {
+            MenuModel local_model = model;
+            int32 local_id = parent_id;
+            if (local_id != 0) {
+                var sub_id = local_id % 0xff - 1;
+                HashTable<string,MenuModel> links;
+                if (local_model.get_n_items() <= sub_id) return {};
+                local_model.get_item_links(sub_id, out links);
+                if (links == null || links.size() == 0) return {};
+                local_model = links.get_values().first().data;
+                local_id = local_id >> 8;
+            }
+            int n = local_model.get_n_items();
+            int32[] arr = new int32[n];
+            for(int i = 0; i < n; i++) {
+                arr[i] = (parent_id << 8) + i + 1;
+            }
+            return arr;
+        }
+    
+        private static Gee.Map<string, Variant>? get_properties(int32 id, MenuModel model) {
+            if (id == 0) {
+                Gee.Map<string, Variant> result = new Gee.HashMap<string, Variant>();
+                result["children-display"] = "submenu";
+                return result;
+            }
+            MenuModel local_model = model;
+            int32 local_id = id;
+            if (local_id > 0xff) {
+                var sub_id = local_id % 0xff - 1;
+                HashTable<string,MenuModel> links;
+                if (local_model.get_n_items() <= sub_id) return null;
+                local_model.get_item_links(sub_id, out links);
+                if (links == null || links.size() == 0) return null;
+                local_model = links.get_values().first().data;
+                local_id = local_id >> 8;
+            }
+            var sub_id = local_id - 1;
+            if (local_model.get_n_items() <= sub_id) return null;
+            HashTable<string,Variant> attributes;
+            local_model.get_item_attributes(sub_id, out attributes);
+            if (attributes == null) return null;
+            Gee.Map<string, Variant> result = new Gee.HashMap<string, Variant>();
+            attributes.for_each((key, val) => {
+                switch(key) {
+                    case "submenu": result["children-display"] = "submenu"; break;
+                    case "section": result["children-display"] = "section"; break;
+                    default: result[key] = val; break;
+                }
+            });
+            return result;
+        }
+    
+        public static VariantDict? get_properties_dict(int32 id, MenuModel model, string[] property_names) {
+            var properties = get_properties(id, model);
+            if (properties == null) return null;
+            var dict = new VariantDict();
+            foreach(var entry in properties) {
+                if (entry.key in property_names || property_names.length == 0) {
+                    dict.insert_value(entry.key, entry.value);
+                }
+            }
+            return dict;
+        }
+    
+        [DBus (name = "GetLayout")]
+        public void get_layout(int32 parent_id, int32 recursion_depth, string[] property_names, out uint revision, [DBus (signature = "(ia{sv}av)")] out Variant layout) throws Error {
+            var builder = new VariantBuilder(new VariantType("(ia{sv}av)"));
+            builder.add("i", parent_id);
+            var properties = get_properties_dict(parent_id, item.menu_model, property_names) ?? new VariantDict();
+            builder.add_value(properties.end());
+            Variant[] children = {};
+            if (recursion_depth != 0) {
+                int32[] ids = get_children_ids(parent_id, item.menu_model);
+                foreach(int32 id in ids) {
+                    Variant child;
+                    get_layout(id, recursion_depth - 1, property_names, null, out child);
+                    children += new Variant.variant(child);
+                }
+            }
+            builder.add_value(new Variant.array(VariantType.VARIANT, children));
+            revision = item.menu_model_revision;
+            layout = builder.end();
+        }
+    
+        [DBus (name = "GetGroupProperties")]
+        public void get_group_properties(int32[] ids, string[] property_names, [DBus (signature = "a(ia{sv})")] out Variant properties) throws Error {
+            Variant[] items = {};
+            foreach(int32 id in ids) {
+                var properties_dict = get_properties_dict(id, item.menu_model, property_names);
+                if (properties_dict != null) {
+                    var builder = new VariantBuilder(new VariantType("(ia{sv})"));
+                    builder.add("i", id);
+                    builder.add_value(properties_dict.end());
+                    items += builder.end();
+                }
+            }
+            properties = new Variant.array(new VariantType("(ia{sv})"), items);
+        }
+    
+        [DBus (name = "GetProperty")]
+        public new void get_property(int32 id, string name, out Variant value) throws Error {
+            var properties = get_properties(id, item.menu_model);
+            if (properties != null && properties.has_key(name)) {
+                value = properties[name];
+            } else {
+                value = null;
+            }
+        }
+    
+        private bool resolve_event(int32 id, string event_id, Variant data, uint32 timestamp) throws Error {
+            if (event_id == "clicked") {
+                if (id == 0) return false;
+                MenuModel local_model = item.menu_model;
+                int32 local_id = id;
+                if (local_id > 0xff) {
+                    var sub_id = local_id % 0xff - 1;
+                    HashTable<string,MenuModel> links;
+                    if (local_model.get_n_items() <= sub_id) return false;
+                    local_model.get_item_links(sub_id, out links);
+                    if (links == null || links.size() == 0) return false;
+                    local_model = links.get_values().first().data;
+                    local_id = local_id >> 8;
+                }
+                var sub_id = local_id - 1;
+                if (local_model.get_n_items() <= sub_id) return false;
+                Variant? action_variant = local_model.get_item_attribute_value(sub_id, "action", VariantType.STRING);
+                if (action_variant == null) return false;
+                size_t action_length;
+                unowned string actionu = action_variant.get_string(out action_length);
+                string detailed_action = actionu.substring(0, (long) action_length);
+                string action;
+                Variant parameter;
+                Action.parse_detailed_name(detailed_action, out action, out parameter);
+                if (action.has_prefix("app.")) {
+                    GLib.Application.get_default().activate_action(action.substring(4), parameter);
+                } else {
+                    warning("Unknown action: %s", action);
+                    return false;
+                }
+            } else {
+                return false;
+            }
+            return true;
+        }
+    
+        [DBus (name = "Event")]
+        public void event(int32 id, string event_id, Variant data, uint32 timestamp) throws Error {
+            resolve_event(id, event_id, data, timestamp);
+        }
+    
+        [DBus (name = "EventGroup")]
+        public int[] event_group(DBusMenuEventStruct[] events) throws Error
+        {
+            var ret = new Gee.ArrayList<int>();
+            foreach(var ev in events) {
+                if (!resolve_event(ev.id, ev.event_id, ev.data, ev.timestamp)) {
+                    ret.add(ev.id);
+                }
+            }
+    
+            if (ret.size == events.length) {
+                throw new DBusError.INVALID_ARGS("None of the events were valid.");
+            }
+    
+            return ret.to_array();
+        }
+    
+        public struct DBusMenuEventStruct {
+            public int id;
+            public string event_id;
+            public GLib.Variant data;
+            public uint timestamp;
+        }
+    
+        [DBus (name = "AboutToShow")]
+        public bool about_to_show(int32 id) throws Error {
+            return false;
+        }
+    
+        [DBus (name = "ItemsPropertiesUpdated")]
+        public signal void item_properties_updated([DBus (signature = "a(ia{sv})")] Variant updated_properties, [DBus (signature = "a(ias)")] Variant removed_properties);
+        [DBus (name = "LayoutUpdated")]
+        public signal void layout_updated(uint32 revision, int32 parent);
+        [DBus (name = "ItemActivationRequested")]
+        public signal void item_activation_requested(int32 id, uint32 timestamp);
+    }
+    
+    public struct DBusStatusNotifierIconData {
         public int width;
         public int height;
         public uint8[] data;
-
-        public Gdk.Pixbuf? as_pixbuf(
-            int size = 0,
-            Gdk.InterpType resize_method = Gdk.InterpType.NEAREST
-        ) {
-            if (this.width < 1 || this.height < 1 || this.data.length < 1) {
-                return null; // how?
-            }
-
-            uint8[] data_bytearray = this.data.copy();
+    }
     
-            // RGBA -> ARGB
-            for (int i = 0; i < this.width * this.height * 4; i += 4) {
-                uint8 alpha = data_bytearray[i];
-                data_bytearray[i] = data_bytearray[i + 1];
-                data_bytearray[i + 1] = data_bytearray[i + 2];
-                data_bytearray[i + 2] = data_bytearray[i + 3];
-                data_bytearray[i + 3] = alpha;
-            }
-        
-            Gdk.Pixbuf pixbuf = new Gdk.Pixbuf.from_bytes(
-                new Bytes(data_bytearray),
-                Gdk.Colorspace.RGB,
-                true,
-                8,
-                (int)this.width,
-                (int)this.height,
-                (int)(this.width * 4)
-            );
-
-            if (size > 0 && size != this.width && pixbuf != null) {
-                return pixbuf.scale_simple(size, size, resize_method);
-            }
-            return pixbuf;
+    public struct DBusStatusNotifierItemToolTip {
+        public string icon_name;
+        public DBusStatusNotifierIconData[] icon;
+        public string title;
+        public string body;
+    
+        public static DBusStatusNotifierItemToolTip empty() {
+            return { "", {}, "", "" };
         }
     }
-
-    public Pixmap? get_pixmap_for_pixmaps(Pixmap?[] pixmaps, int target_size = 24) {
-        foreach (Pixmap pm in pixmaps) {
-            if (pm.width >= target_size && pm.height >= target_size) {
-                return pm;
-			}
-		}
-        return null;
-    }
-
-    public struct Tooltip {
-        string icon_name;
-        Pixmap?[] icon_pixmaps;
-        string text;
-        string markup;
-        public string? get_text_or_markup() {
-            if (this.text != null && this.markup != null) return this.markup;
-            else if (this.text != null) return this.text;
-            else if (this.markup != null) return this.markup;
-            return null;
-        }
-    }
-
-    [DBus (name = "org.kde.StatusNotifierItem")]
-    public interface ItemProxy : DBusProxy {
-        /* signals */
-        [DBus (name = "NewTitle")]
-        public signal void new_title();
-        [DBus (name = "NewIcon")]
-        public signal void new_icon();
-        [DBus (name = "NewAttentionIcon")]
-        public signal void new_attention_icon();
-        [DBus (name = "NewOverlayIcon")]
-        public signal void new_overlay_icon();
-        [DBus (name = "NewToolTip")]
-        public signal void new_tooltip();
-        [DBus (name = "NewStatus")]
-        public signal void new_status(string status);
-
-        /* properties */
-        [DBus (name = "Category")]
-        public abstract string category { owned get; }
-        [DBus (name = "Id")]
-        public abstract string id { owned get; }
-        [DBus (name = "Title")]
-        public abstract string title { owned get; }
-        [DBus (name = "Status")]
-        public abstract string status { owned get; }
-        [DBus (name = "WindowId")]
-        public abstract int window_id { get; }
-        [DBus (name = "IconThemePath")]
-        public abstract string icon_theme_path { owned get; }
-        [DBus (name = "ItemIsMenu")]
-        public abstract bool item_is_menu { get; }
-        [DBus (name = "Menu")]
-        public abstract ObjectPath menu_path { owned get; }
-        [DBus (name = "IconName")]
-        public abstract string icon_name { owned get; }
-        [DBus (name = "IconPixmap")]
-        public abstract Pixmap?[] icon_pixmaps { owned get; }
-        [DBus (name = "AttentionIconName")]
-        public abstract string attention_icon_name { owned get; }
-        [DBus (name = "AttentionIconPixmap")]
-        public abstract Pixmap?[] attention_icon_pixmaps { owned get; }
-        [DBus (name = "ToolTip")]
-        public abstract Tooltip tooltip { owned get; }
-
-        /* methods */
-        [DBus (name = "ContextMenu")]
-        public abstract void context_menu(int x, int y) throws DBusError, IOError;
-        [DBus (name = "Activate")]
-        public abstract void activate(int x, int y) throws DBusError, IOError;
-        [DBus (name = "SecondaryActivate")]
-        public abstract void secondary_activate(int x, int y) throws DBusError, IOError;
-        [DBus (name = "Scroll")]
-        public abstract void scroll(int delta, string orientation) throws DBusError, IOError;
-    }
-
-    public class Item : Object {
-        public signal void ready();
-        public signal void error();
-        public signal void removed();
-        public signal void changed();
-        public signal void icon_changed();
-
-        public string bus_name { get; private set; }
-        public string bus_path { get; private set; }
-        public string identifier { get; private set; }
-        public ItemProxy? proxy { get; private set; }
-        public DbusmenuGtk.Menu? menu { get; set; }
-
-        public string category { owned get { return this.proxy.category; } }
-        public string id { owned get { return this.proxy.id; } }
-        public string title { owned get { return this.proxy.title; } }
-        public string status { owned get { return this.proxy.status; } }
-        public int window_id {  get { return this.proxy.window_id; } }
-        public string icon_theme_path { owned get { return this.proxy.icon_theme_path; } }
-        public bool item_is_menu {  get { return this.proxy.item_is_menu; } }
-        public string menu_path { owned get { return this.proxy.menu_path.to_string(); } }
-        public string icon_name { owned get { return this.proxy.icon_name; } }
-        public Pixmap?[] icon_pixmaps { owned get { return this.proxy.icon_pixmaps; } }
-        public string attention_icon_name { owned get { return this.proxy.attention_icon_name; } }
-        public Pixmap?[] attention_icon_pixmaps { owned get { return this.proxy.attention_icon_pixmaps; } }
-        public Tooltip tooltip { owned get { return this.proxy.tooltip; } }
-
-        public Item(string bus_name, string bus_path) {
-            this.bus_name = bus_name;
-            this.bus_path = bus_path;
-            this.identifier = bus_name + bus_path;
-
-            Bus.get_proxy.begin<ItemProxy>(
-                GLib.BusType.SESSION,
-                bus_name, 
-                bus_path, 
-                GLib.DBusProxyFlags.NONE, 
-                null, 
-                (_, result) => {
-                    try{
-                        this.proxy = Bus.get_proxy.end<ItemProxy>(result);
-                        this.proxy.notify["g-name-owner"].connect(
-                            () => {
-                                if (this.proxy.g_name_owner == null) {
-                                    this.removed();
-                                }
-                            }
-                        );
-                    } catch ( IOError e) {
-                        warning(@"cannot register item with identifier $(this.identifier), error message $(e.message)");
-                        return;
-                    }
-                    this.pre_ready();
-                    // all aboard...
-                    this.ready();
-                }
-            );
-        }
-
-        private void notify_for_icon() {
-            this.icon_changed();
-            this.changed();
-        }
-
-        private void notify_for_property(string prop_name) {
-            this.notify_property(prop_name);
-            this.changed();
-        }
-
-        private void pre_ready() {
-            this.menu = this.create_menu();
-            this.proxy.new_attention_icon.connect(() => { this.notify_for_icon(); });
-            this.proxy.new_overlay_icon.connect(() => { this.notify_for_icon(); });
-            this.proxy.new_icon.connect(() => { this.notify_for_icon(); });
-            this.proxy.new_title.connect(() => { this.notify_for_property("title"); });
-            this.proxy.new_tooltip.connect(() => { this.notify_for_property("tooltip"); });
-            this.proxy.new_status.connect(() => { this.notify_for_property("status"); });
-        }
-
-        public void context_menu(int x, int y) throws DBusError, IOError {
-            this.proxy.context_menu(x, y);
-            return;
-        }
-
-        public void activate(int x, int y) throws DBusError, IOError {
-            this.proxy.activate(x, y);
-            return;
-        }
-
-        public void activate_for_event(Gdk.EventAny event) throws DBusError, IOError {
-            double x, y; event.get_coords(out x, out y);
-            this.activate((int)x, (int)y);
-            return;
-        }
-
-        public void secondary_activate(int x, int y) throws DBusError, IOError {
-            this.proxy.secondary_activate(x, y);
-            return;
-        }
-
-        public void secondary_activate_for_event(Gdk.EventAny event) throws DBusError, IOError {
-            double x, y; event.get_coords(out x, out y);
-            this.secondary_activate((int)x, (int)y);
-            return;
-        }
-
-        public void scroll(int delta, string orientation) throws DBusError, IOError {
-            this.proxy.scroll(delta, orientation);
-            return;
-        }
-
-        public void scroll_for_event(Gdk.EventAny event) throws DBusError, IOError {
-            Gdk.ScrollDirection direction;
-            event.get_scroll_direction(out direction);
-            double delta_x, delta_y; event.get_scroll_deltas(out delta_x, out delta_y);
-            switch (direction) {
-                case Gdk.ScrollDirection.UP:
-                case Gdk.ScrollDirection.DOWN:
-                        this.scroll((int)delta_y, "vertical");
-                    break;
-                case Gdk.ScrollDirection.LEFT:
-                case Gdk.ScrollDirection.RIGHT:
-                        this.scroll((int)delta_x, "horizontal");
-                    break;
-                default:
-                    break;
-            }
-            return;
-        }
-        
-        public DbusmenuGtk.Menu? create_menu() {
-            if (this.menu_path == "") return null;
-            return new DbusmenuGtk.Menu(this.proxy.get_name_owner(), this.menu_path);
-        }
-    }
-
-    [DBus (name = "org.kde.StatusNotifierWatcher")]
-    public class Watcher : Object {
-        /* dbus-hidden properties/signals */
-        [DBus (visible = false)]
-        private DBusConnection? connection;
-        [DBus (visible = false)]
-        public HashTable<string, Item> items { get; private set; }
-
-        [DBus (visible = false)]
-        public signal void item_added(string identifier);
-        public signal void item_removed(string identifier);
-
-        [DBus (visible = false)]
-        public signal void name_owned();
-        [DBus (visible = false)]
-        public signal void name_own_error();
-
-        /* dbus visible stuff */
-        [DBus (name = "StatusNotifierItemRegistered")]
-        public signal void status_notifier_item_registered(string service);
-        [DBus (name = "StatusNotifierItemUnregistered")]
-        public signal void status_notifier_item_unregistered(string service);
-        [DBus (name = "StatusNotifierHostRegistered")]
-        public signal void status_notifier_host_registered();
-        [DBus (name = "StatusNotifierHostUnregistered")]
-        public signal void status_notifier_host_unregistered();
-
-        [DBus (name = "RegisteredStatusNotifierItems")]
-        public string[] registered_status_notifier_items { owned get { return this.items.get_keys_as_array(); } }
-        [DBus (name = "IsStatusNotifierHostRegistered")]
-        public bool is_status_notifier_host_registered { default = true; get; }
-        [DBus (name = "ProtocolVersion")]
-        public int protocol_version { default = 3; get; }
-
-        construct {
-            this.items = new HashTable<string, Item> (str_hash, str_equal);
-            this.register();
-        }
-        
-        private void register() {
-            Bus.own_name(
-                BusType.SESSION, "org.kde.StatusNotifierWatcher",
-                BusNameOwnerFlags.NONE,
-                (conn) => {
-                    this.connection = conn;
+    
+    public class StatusNotifierItem : Object {
+        public string id { get; set; }
+        public string title { get; set; }
+        public string category { get; set; }
+        public string status { get; set; }
+        public int32 window_id { get; set; }
+        public bool is_menu { get; set; }
+        public bool host_registered { get; set; }
+        public string icon_name { get; set; }
+        public string? overlay_icon_name { get; set; }
+        public string? attention_icon_name { get; set; }
+        public DBusStatusNotifierItemToolTip? tool_tip { get; set; }
+        public MenuModel? menu_model { get; set; }
+        public uint32 menu_model_revision = 1;
+    
+        public signal void context_menu(int x, int y);
+        public signal void activate(int x, int y);
+        public signal void secondary_activate(int x, int y);
+        public signal void scroll(int delta, string orientation);
+    
+        private DBusStatusNotifierItem dbus_item;
+        private DBusMenu dbus_menu;
+        private string name { owned get { return id; } }
+        private bool registered;
+        private uint name_owner_id;
+        private DBusConnection dbus_connection;
+        private uint dbus_item_registration_id;
+        private uint dbus_menu_registration_id;
+        private DBusStatusNotifierWatcher watcher;
+    
+        private void on_bus_acquired(DBusConnection dbus_connection) {
+            try {
+                this.dbus_connection = dbus_connection;
+                if (menu_model == null) dbus_menu = null;
+                if (menu_model != null && dbus_menu == null) dbus_menu = new DBusMenu(this);
+                if (dbus_menu != null) dbus_menu_registration_id = dbus_connection.register_object("/StatusNotifierMenu", dbus_menu);
+                if (dbus_item == null) dbus_item = new DBusStatusNotifierItem(this, dbus_menu != null ? new ObjectPath("/StatusNotifierMenu") : null);
+                dbus_item_registration_id = dbus_connection.register_object("/StatusNotifierItem", dbus_item);
+                notify["title"].connect((o, _) => ((StatusNotifierItem)o).dbus_item.on_new_title());
+                notify["icon-name"].connect((o, _) => ((StatusNotifierItem)o).dbus_item.on_new_icon());
+                notify["menu"].connect((o, _) => ((StatusNotifierItem)o).dbus_item.on_new_menu());
+                notify["tool-tip"].connect((o, _) => ((StatusNotifierItem)o).dbus_item.on_new_tool_tip());
+                notify["status"].connect((o, _) => ((StatusNotifierItem)o).dbus_item.on_new_status(((StatusNotifierItem)o).status));
+                notify["menu-model"].connect((o, _) => {
+                    ((StatusNotifierItem)o).dbus_menu.layout_updated(++((StatusNotifierItem)o).menu_model_revision, 0);
                     try {
-                        conn.register_object ("/StatusNotifierWatcher", this);
-                        this.status_notifier_host_registered();
+                        var item = ((StatusNotifierItem)o);
+                        var menu = item.dbus_menu;
+                        Variant properties;
+                        menu.get_group_properties(DBusMenu.get_children_ids(0, item.menu_model), {}, out properties);
+                        menu.item_properties_updated(properties, new Variant.array(new VariantType("(ia{sv})"), {}));
                     } catch (Error e) {
-                        this.name_own_error();
+                        critical(e.message);
                     }
-                },
-                () => { this.name_owned(); },
-                () => { this.name_own_error(); }
-            );
-        }
-
-        [DBus (visible = false)]
-        public Item? get_item_for_identifier(string identifier) {
-            return this.items.get(identifier);
-        }
-
-        /* methods */
-        [DBus (name = "RegisterStatusNotifierItem")]
-        public void register_status_notifier_item(string path, BusName name) throws DBusError, IOError {
-            if (!path.has_prefix("/")) {
-                /* not a valid object path
-                   probably a ":1.42"-like name instead */
-                path = "/StatusNotifierItem";
+                });
+            } catch (IOError e) {
+                critical("on_bus_acquired: %s", e.message);
             }
-            var item = new Item(name.to_string(), path);
-            item.ready.connect(
-                () => {
-                    this.items[item.identifier] = item;
-                    this.item_added(item.identifier);
-                    this.status_notifier_item_registered(item.identifier);
-                }
-            );
-            item.removed.connect(
-                () => {
-                    this.items.remove(item.identifier);
-                    this.item_removed(item.identifier);
-                    this.status_notifier_item_unregistered(item.identifier);
-                }
-            );
         }
-
-        [DBus (name = "RegisterStatusNotifierHost")]
-        public void register_status_notifier_host(string service) throws DBusError, IOError { return; }
+    
+        private void on_name_acquired (DBusConnection dbus_connection) {
+            try {
+                watcher = Bus.get_proxy_sync(BusType.SESSION, "org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher");
+                watcher.host_registered.connect(() => host_registered = true);
+                watcher.host_unregistered.connect(() => host_registered = false);
+                host_registered = watcher.is_host_registered;
+            } catch (IOError e) {
+                critical("on_name_acquired: %s", e.message);
+            }
+        }
+    
+        public void init() {
+            if (id == null) critical("StatusNotifierItem.id not set before initializing");
+            name_owner_id = Bus.own_name(BusType.SESSION, name, BusNameOwnerFlags.NONE, on_bus_acquired, on_name_acquired, () => warning("Could not acquire name: %s", name));
+        }
+    
+        public void register() {
+            if (watcher == null || registered) return;
+            watcher.register_item.begin(name);
+            registered = true;
+        }
+    
+        public void unregister() {
+            if (!registered) return;
+            if (name_owner_id != 0) Bus.unown_name(name_owner_id);
+            name_owner_id = 0;
+            if (dbus_item_registration_id != 0 && dbus_connection != null) dbus_connection.unregister_object(dbus_item_registration_id);
+            if (dbus_menu_registration_id != 0 && dbus_connection != null) dbus_connection.unregister_object(dbus_menu_registration_id);
+            dbus_item_registration_id = 0;
+            dbus_menu_registration_id = 0;
+            dbus_connection = null;
+            registered = false;
+        }
     }
+
 }

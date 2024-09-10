@@ -1,7 +1,7 @@
-project('gray', 'vala', 'c', version: '0.0.1')
-
-if build_machine.system() == 'windows'
-    error('libgray is not meant for windows users, consider moving to linux.')
-endif
+project('gray', 'vala', version: '0.0.2')
 
 subdir('libgray')
+
+if get_option('enable_examples')
+    subdir('examples')
+endif

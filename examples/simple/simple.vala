@@ -1,17 +1,38 @@
-// !/usr/bin/env -S vala --pkg gtk+-3.0 --pkg gio-2.0 --pkg Dbusmenu-0.4 --pkg DbusmenuGtk3-0.4 --pkg gdk-pixbuf-2.0 --pkg Gray-0.1
 using Gtk;
 using Gray;
 
-void main(string[] argv) {
-    Gtk.init(ref argv);
+namespace simple {
+    public void main(string[] argv) {
+        var app = new Gtk.Application("libgray.example.simple", GLib.ApplicationFlags.FLAGS_NONE);
 
-    var watcher = new Gray.Watcher();
-    watcher.item_added.connect(
-        (identifier) => {
-            var item = watcher.get_item_for_identifier(identifier);
-            print(@"$(item.title)\n");
-        }
-    );
+        app.activate.connect (() => {
+            var window = new Gtk.ApplicationWindow(app);
+            window.present();
+        });
 
-    Gtk.main();
+        var item = new Gray.StatusNotifierItem() {
+            id = "libgray.example.simple.indicator",
+            title = "libgray.example.simple.title",
+            icon_name = "face-angel",
+            category = "ApplicationStatus",
+            status = "Active",
+            is_menu = true,
+        };
+
+        item.notify["host-registered"].connect (() => {
+            if (item.host_registered) {
+                item.register();
+            }
+        });
+
+        item.init();
+
+        var menu = new Menu();
+        menu.append_item(
+            new MenuItem("no function", "no-function")
+        );
+        item.menu_model = menu;
+
+        app.run(argv);
+    }
 }
