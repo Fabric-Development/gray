@@ -7,7 +7,18 @@
 Gray is an implementation of the SNI protocol (see [this](https://www.freedesktop.org/wiki/Specifications/StatusNotifierItem/)), made to make stuff **super** simple
 
 ---
-build Gray and install it
+
+## Installation
+
+### Arch Linux 
+
+From the AUR using your favorite AUR helper
+
+```
+yay -S gray-git
+```
+
+Or alternatively you can manually build Gray and install it
 ```sh
 meson --prefix=/usr build && sudo ninja -C build install
 ```
